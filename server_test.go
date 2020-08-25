@@ -29,7 +29,7 @@ package mgo_test
 import (
 	"time"
 
-	"github.com/globalsign/mgo"
+	"github.com/izinga/mgo"
 	. "gopkg.in/check.v1"
 )
 

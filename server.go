@@ -33,7 +33,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/globalsign/mgo/bson"
+	"github.com/izinga/mgo/bson"
 )
 
 // coarseTime is used to amortise the cost of querying the timecounter (possibly
