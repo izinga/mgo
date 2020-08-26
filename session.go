@@ -65,7 +65,13 @@ func handleEventsFunc(tableName string, query interface{}, update interface{}) {
 	eventLock.Lock()
 	defer eventLock.Unlock()
 	for _, fn := range EventsFuncs {
-		fn(tableName, query, update)
+		if selector, ok := query.(bson.D); ok {
+			// fn(tableName, selector.ConvertToMap(), update)
+			if updateData, ok1 := update.(bson.M); ok1 {
+				fn(tableName, selector.ConvertToMap(), updateData.ConvertToMap())
+			}
+		}
+
 	}
 }
 
