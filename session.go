@@ -56,6 +56,9 @@ import (
 //
 type Mode int
 
+// PushEventFunc push event
+type PushEventFunc func(tableName string, query interface{}, changes interface{})
+
 const (
 	// Primary mode is default mode. All operations read from the current replica set primary.
 	Primary Mode = 2
@@ -2912,7 +2915,6 @@ func (p *Pipe) SetMaxTime(d time.Duration) *Pipe {
 	return p
 }
 
-
 // Collation allows to specify language-specific rules for string comparison,
 // such as rules for lettercase and accent marks.
 // When specifying collation, the locale field is mandatory; all other collation
@@ -2998,7 +3000,11 @@ func IsDup(err error) bool {
 // happens while inserting the provided documents, the returned error will
 // be of type *LastError.
 func (c *Collection) Insert(docs ...interface{}) error {
+
 	_, err := c.writeOp(&insertOp{c.FullName, docs, 0}, true)
+	if err == nil {
+		PushEventFunc(c.FullName, nil, docs[0])
+	}
 	return err
 }
 
@@ -3025,6 +3031,9 @@ func (c *Collection) Update(selector interface{}, update interface{}) error {
 	lerr, err := c.writeOp(&op, true)
 	if err == nil && lerr != nil && !lerr.UpdatedExisting {
 		return ErrNotFound
+	}
+	if err == nil {
+		PushEventFunc(c.FullName, selector, update)
 	}
 	return err
 }
@@ -5031,6 +5040,7 @@ func (q *Query) Apply(change Change, result interface{}) (info *ChangeInfo, err 
 		err = &lerr
 		return info, err
 	}
+	PushEventFunc(cname, op.query, change.Update)
 	return info, nil
 }
 
