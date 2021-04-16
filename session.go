@@ -59,11 +59,13 @@ type handleErrorFunc func(*Session, error)
 
 // EventsFuncs push event
 var EventsFuncs []func(string, interface{}, interface{})
-var eventLock = &sync.Mutex{}
+var mgeventLock = &sync.Mutex{}
 
 func handleEventsFunc(tableName string, query interface{}, update interface{}) {
-	eventLock.Lock()
-	defer eventLock.Unlock()
+	fmt.Println("We are wating going to wait for eventLock in mongodb")
+	// mgeventLock.Lock()
+	fmt.Println("We are got  eventLock in mongodb")
+	// defer mgeventLock.Unlock()
 	for _, fn := range EventsFuncs {
 		if selector, ok := query.(bson.D); ok {
 			// fn(tableName, selector.ConvertToMap(), update)
@@ -3019,7 +3021,7 @@ func (c *Collection) Insert(docs ...interface{}) error {
 
 	_, err := c.writeOp(&insertOp{c.FullName, docs, 0}, true)
 	if err == nil {
-		// handleEventsFunc(c.FullName, nil, docs[0])
+		handleEventsFunc(c.FullName, nil, docs[0])
 	}
 	return err
 }
