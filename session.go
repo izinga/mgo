@@ -55,9 +55,25 @@ import (
 //     http://docs.mongodb.org/manual/reference/read-preference/
 //
 type Mode int
+type handleErrorFunc func(*Session, error)
 
-// PushEventFunc push event
-type PushEventFunc func(tableName string, query interface{}, changes interface{})
+// EventsFuncs push event
+var EventsFuncs []func(string, interface{}, interface{})
+var eventLock = &sync.Mutex{}
+
+func handleEventsFunc(tableName string, query interface{}, update interface{}) {
+	eventLock.Lock()
+	defer eventLock.Unlock()
+	for _, fn := range EventsFuncs {
+		if selector, ok := query.(bson.D); ok {
+			// fn(tableName, selector.ConvertToMap(), update)
+			if updateData, ok1 := update.(bson.M); ok1 {
+				fn(tableName, selector.ConvertToMap(), updateData.ConvertToMap())
+			}
+		}
+
+	}
+}
 
 const (
 	// Primary mode is default mode. All operations read from the current replica set primary.
@@ -3003,7 +3019,7 @@ func (c *Collection) Insert(docs ...interface{}) error {
 
 	_, err := c.writeOp(&insertOp{c.FullName, docs, 0}, true)
 	if err == nil {
-		PushEventFunc(c.FullName, nil, docs[0])
+		// handleEventsFunc(c.FullName, nil, docs[0])
 	}
 	return err
 }
@@ -3033,7 +3049,7 @@ func (c *Collection) Update(selector interface{}, update interface{}) error {
 		return ErrNotFound
 	}
 	if err == nil {
-		PushEventFunc(c.FullName, selector, update)
+		handleEventsFunc(c.FullName, selector, update)
 	}
 	return err
 }
@@ -5040,7 +5056,7 @@ func (q *Query) Apply(change Change, result interface{}) (info *ChangeInfo, err 
 		err = &lerr
 		return info, err
 	}
-	PushEventFunc(cname, op.query, change.Update)
+	handleEventsFunc(cname, op.query, change.Update)
 	return info, nil
 }
 

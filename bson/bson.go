@@ -146,6 +146,21 @@ var ErrSetZero = errors.New("set to zero")
 // undefined ordered. See also the bson.D type for an ordered alternative.
 type M map[string]interface{}
 
+// ConvertToMap returns a map out of the ordered element name/value pairs in d.
+func (m M) ConvertToMap() (mp map[string]interface{}) {
+	mp = make(map[string]interface{}, len(m))
+	for key, value := range m {
+		if data, ok := value.(M); ok {
+			mp[key] = data.ConvertToMap()
+		} else if data, ok := value.(D); ok {
+			mp[key] = data.ConvertToMap()
+		} else {
+			mp[key] = value
+		}
+	}
+	return mp
+}
+
 // D represents a BSON document containing ordered elements. For example:
 //
 //     bson.D{{"a", 1}, {"b", true}}
@@ -166,6 +181,19 @@ func (d D) Map() (m M) {
 	m = make(M, len(d))
 	for _, item := range d {
 		m[item.Name] = item.Value
+	}
+	return m
+}
+
+// ConvertToMap returns a map out of the ordered element name/value pairs in d.
+func (d D) ConvertToMap() (m map[string]interface{}) {
+	m = make(map[string]interface{}, len(d))
+	for _, item := range d {
+		if data, ok := item.Value.(D); ok {
+			m[item.Name] = data.ConvertToMap()
+		} else {
+			m[item.Name] = item.Value
+		}
 	}
 	return m
 }
@@ -296,7 +324,7 @@ func NewObjectIdWithTime(t time.Time) ObjectId {
 // String returns a hex string representation of the id.
 // Example: ObjectIdHex("4d88e15b60f486e428412dc9").
 func (id ObjectId) String() string {
-	return fmt.Sprintf(`ObjectIdHex("%x")`, string(id))
+	return fmt.Sprintf(`%x`, string(id))
 }
 
 // Hex returns a hex representation of the ObjectId.
