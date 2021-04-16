@@ -59,13 +59,9 @@ type handleErrorFunc func(*Session, error)
 
 // EventsFuncs push event
 var EventsFuncs []func(string, interface{}, interface{})
-var mgeventLock = &sync.Mutex{}
+=
 
 func handleEventsFunc(tableName string, query interface{}, update interface{}) {
-	fmt.Println("We are wating going to wait for eventLock in mongodb")
-	// mgeventLock.Lock()
-	fmt.Println("We are got  eventLock in mongodb")
-	// defer mgeventLock.Unlock()
 	for _, fn := range EventsFuncs {
 		if selector, ok := query.(bson.D); ok {
 			// fn(tableName, selector.ConvertToMap(), update)
