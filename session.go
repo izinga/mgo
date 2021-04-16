@@ -59,7 +59,6 @@ type handleErrorFunc func(*Session, error)
 
 // EventsFuncs push event
 var EventsFuncs []func(string, interface{}, interface{})
-=
 
 func handleEventsFunc(tableName string, query interface{}, update interface{}) {
 	for _, fn := range EventsFuncs {
