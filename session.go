@@ -67,6 +67,11 @@ func handleEventsFunc(tableName string, query interface{}, update interface{}) {
 			if updateData, ok1 := update.(bson.M); ok1 {
 				fn(tableName, selector.ConvertToMap(), updateData.ConvertToMap())
 			}
+	
+		}else if selector, ok := query.(bson.M);ok  {
+			if updateData, ok1 := update.(bson.M); ok1 {
+				fn(tableName, selector.ConvertToMap(), updateData.ConvertToMap())
+			}
 		}
 
 	}
@@ -4969,6 +4974,7 @@ type valueResult struct {
 //     http://www.mongodb.org/display/DOCS/Atomic+Operations
 //
 func (q *Query) Apply(change Change, result interface{}) (info *ChangeInfo, err error) {
+
 	q.m.Lock()
 	session := q.session
 	op := q.op // Copy.
@@ -5051,9 +5057,10 @@ func (q *Query) Apply(change Change, result interface{}) (info *ChangeInfo, err 
 		lerr.Code = e.Code
 		lerr.Err = e.ErrMsg
 		err = &lerr
+		// handleEventsFunc(cname,  change.Update, op.query)
 		return info, err
 	}
-	handleEventsFunc(cname, op.query, change.Update)
+	handleEventsFunc(cname,   op.query,change.Update)
 	return info, nil
 }
 
