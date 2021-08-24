@@ -59,21 +59,33 @@ type handleErrorFunc func(*Session, error)
 
 // EventsFuncs push event
 var EventsFuncs []func(string, interface{}, interface{})
+var ValidTables []string
+
+func stringInSlice(a string, list []string) bool {
+	for _, b := range list {
+		if b == a {
+			return true
+		}
+	}
+	return false
+}
 
 func handleEventsFunc(tableName string, query interface{}, update interface{}) {
-	for _, fn := range EventsFuncs {
-		if selector, ok := query.(bson.D); ok {
-			// fn(tableName, selector.ConvertToMap(), update)
-			if updateData, ok1 := update.(bson.M); ok1 {
-				fn(tableName, selector.ConvertToMap(), updateData.ConvertToMap())
-			}
-	
-		}else if selector, ok := query.(bson.M);ok  {
-			if updateData, ok1 := update.(bson.M); ok1 {
-				fn(tableName, selector.ConvertToMap(), updateData.ConvertToMap())
-			}
-		}
+	if stringInSlice(tableName, ValidTables) {
+		for _, fn := range EventsFuncs {
+			if selector, ok := query.(bson.D); ok {
+				// fn(tableName, selector.ConvertToMap(), update)
+				if updateData, ok1 := update.(bson.M); ok1 {
+					fn(tableName, selector.ConvertToMap(), updateData.ConvertToMap())
+				}
 
+			} else if selector, ok := query.(bson.M); ok {
+				if updateData, ok1 := update.(bson.M); ok1 {
+					fn(tableName, selector.ConvertToMap(), updateData.ConvertToMap())
+				}
+			}
+
+		}
 	}
 }
 
@@ -5060,7 +5072,7 @@ func (q *Query) Apply(change Change, result interface{}) (info *ChangeInfo, err 
 		// handleEventsFunc(cname,  change.Update, op.query)
 		return info, err
 	}
-	handleEventsFunc(cname,   op.query,change.Update)
+	handleEventsFunc(cname, op.query, change.Update)
 	return info, nil
 }
 
