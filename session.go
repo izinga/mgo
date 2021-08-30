@@ -71,6 +71,10 @@ func stringInSlice(a string, list []string) bool {
 }
 
 func handleEventsFunc(tableName string, query interface{}, update interface{}) {
+	temp := strings.Split(tableName, ".")
+	if len(temp) > 1 {
+		tableName = temp[len(temp)-1]
+	}
 	if stringInSlice(tableName, ValidTables) {
 		for _, fn := range EventsFuncs {
 			if selector, ok := query.(bson.D); ok {
