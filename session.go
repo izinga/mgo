@@ -33,6 +33,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -78,8 +79,15 @@ func handleEventsFunc(tableName string, query interface{}, update interface{}) {
 	if stringInSlice(tableName, ValidTables) {
 		for _, fn := range EventsFuncs {
 			if query == nil {
-				if updateData, ok1 := update.(bson.M); ok1 {
-					fn(tableName, query, updateData.ConvertToMap())
+				data, _ := json.Marshal(update)
+				temp := bson.M{}
+				err := json.Unmarshal(data, &temp)
+				if err == nil {
+
+					fn(tableName, query, temp)
+
+				} else {
+					fmt.Printf("mgo update '%T' Error - '%s',  '%+v' is not a valid", update, err.Error(), update)
 				}
 				continue
 			}
