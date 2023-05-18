@@ -45,18 +45,5 @@ func newcoarseTimeProvider(granularity time.Duration) *coarseTimeProvider {
 
 	t.last.Store(time.Now())
 
-	go func() {
-		ticker := time.NewTicker(granularity)
-		for {
-			select {
-			case <-t.stop:
-				ticker.Stop()
-				return
-			case <-ticker.C:
-				t.last.Store(time.Now())
-			}
-		}
-	}()
-
 	return t
 }
