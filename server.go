@@ -45,7 +45,7 @@ import (
 var coarseTime *coarseTimeProvider
 
 func init() {
-	coarseTime = newcoarseTimeProvider(25 * time.Millisecond)
+	// coarseTime = newcoarseTimeProvider(25 * time.Millisecond)
 }
 
 // ---------------------------------------------------------------------------
@@ -297,7 +297,7 @@ func (server *mongoServer) close(waitForIdle bool) {
 func (server *mongoServer) RecycleSocket(socket *mongoSocket) {
 	server.Lock()
 	if !server.closed {
-		socket.lastTimeUsed = coarseTime.Now() // A rough approximation of the current time - see courseTime
+		socket.lastTimeUsed = time.Now() // A rough approximation of the current time - see courseTime
 		server.unusedSockets = append(server.unusedSockets, socket)
 	}
 	// If anybody is waiting for a connection, they should try now.
