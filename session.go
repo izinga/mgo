@@ -27,6 +27,7 @@
 package mgo
 
 import (
+	"context"
 	"crypto/md5"
 	"crypto/tls"
 	"crypto/x509"
@@ -47,6 +48,10 @@ import (
 	"time"
 
 	"github.com/izinga/mgo/bson"
+
+	// "go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // Mode read preference mode. See Eventual, Monotonic and Strong for details
@@ -162,6 +167,8 @@ type Session struct {
 	slaveOk          bool
 
 	dialInfo *DialInfo
+
+	driverDatabase *mongo.Database
 }
 
 // Database holds collections of documents
@@ -236,6 +243,8 @@ var (
 	// ErrCursor error returned when trying to retrieve documents from
 	// an invalid cursor
 	ErrCursor = errors.New("invalid cursor")
+
+	UseMongoDriver = false
 )
 
 const (
@@ -919,10 +928,19 @@ func copySession(session *Session, keepCreds bool) (s *Session) {
 		bypassValidation: session.bypassValidation,
 		slaveOk:          session.slaveOk,
 		dialInfo:         session.dialInfo,
+		driverDatabase:   session.driverDatabase,
 	}
 	s = &scopy
 	debugf("New session %p on cluster %p (copy from %p)", s, cluster, session)
 	return s
+}
+
+func (s *Session) SetDriverDatabase(db *mongo.Database) {
+	s.driverDatabase = db
+}
+
+func (s *Session) SetMongoDriverUse(flag bool) {
+	UseMongoDriver = flag
 }
 
 // LiveServers returns a list of server addresses which are
@@ -2876,7 +2894,18 @@ func (iter *Iter) State() (int64, []bson.Raw) {
 
 // All works like Iter.All.
 func (p *Pipe) All(result interface{}) error {
-	return p.Iter().All(result)
+	if UseMongoDriver {
+		db := p.session.driverDatabase
+		collectionName := p.collection.Name
+		cur, err := db.Collection(collectionName).Aggregate(context.Background(), p.pipeline)
+		if err != nil {
+			return err
+		}
+		err = cur.All(context.Background(), result)
+		return err
+	} else {
+		return p.Iter().All(result)
+	}
 }
 
 // One executes the pipeline and unmarshals the first item from the
@@ -3023,12 +3052,20 @@ func IsDup(err error) bool {
 // happens while inserting the provided documents, the returned error will
 // be of type *LastError.
 func (c *Collection) Insert(docs ...interface{}) error {
+	if UseMongoDriver {
+		db := c.Database.Session.driverDatabase
 
-	_, err := c.writeOp(&insertOp{c.FullName, docs, 0}, true)
-	if err == nil {
-		handleEventsFunc(c.FullName, nil, docs[0])
+		var docsMany []interface{}
+		docsMany = append(docsMany, docs...)
+		_, err := db.Collection(c.Name).InsertMany(context.Background(), docsMany)
+		return err
+	} else {
+		_, err := c.writeOp(&insertOp{c.FullName, docs, 0}, true)
+		if err == nil {
+			handleEventsFunc(c.FullName, nil, docs[0])
+		}
+		return err
 	}
-	return err
 }
 
 // Update finds a single document matching the provided selector document
@@ -3042,22 +3079,29 @@ func (c *Collection) Insert(docs ...interface{}) error {
 //	http://www.mongodb.org/display/DOCS/Updating
 //	http://www.mongodb.org/display/DOCS/Atomic+Operations
 func (c *Collection) Update(selector interface{}, update interface{}) error {
-	if selector == nil {
-		selector = bson.D{}
+	if UseMongoDriver {
+		db := c.Database.Session.driverDatabase
+
+		_, err := db.Collection(c.Name).UpdateOne(context.Background(), selector, update)
+		return err
+	} else {
+		if selector == nil {
+			selector = bson.D{}
+		}
+		op := updateOp{
+			Collection: c.FullName,
+			Selector:   selector,
+			Update:     update,
+		}
+		lerr, err := c.writeOp(&op, true)
+		if err == nil && lerr != nil && !lerr.UpdatedExisting {
+			return ErrNotFound
+		}
+		if err == nil {
+			handleEventsFunc(c.FullName, selector, update)
+		}
+		return err
 	}
-	op := updateOp{
-		Collection: c.FullName,
-		Selector:   selector,
-		Update:     update,
-	}
-	lerr, err := c.writeOp(&op, true)
-	if err == nil && lerr != nil && !lerr.UpdatedExisting {
-		return ErrNotFound
-	}
-	if err == nil {
-		handleEventsFunc(c.FullName, selector, update)
-	}
-	return err
 }
 
 // UpdateId is a convenience helper equivalent to:
@@ -3066,7 +3110,14 @@ func (c *Collection) Update(selector interface{}, update interface{}) error {
 //
 // See the Update method for more details.
 func (c *Collection) UpdateId(id interface{}, update interface{}) error {
-	return c.Update(bson.D{{Name: "_id", Value: id}}, update)
+	if UseMongoDriver {
+		db := c.Database.Session.driverDatabase
+
+		_, err := db.Collection(c.Name).UpdateByID(context.Background(), id, update)
+		return err
+	} else {
+		return c.Update(bson.D{{Name: "_id", Value: id}}, update)
+	}
 }
 
 // ChangeInfo holds details about the outcome of an update operation.
@@ -3092,21 +3143,29 @@ type ChangeInfo struct {
 //	http://www.mongodb.org/display/DOCS/Updating
 //	http://www.mongodb.org/display/DOCS/Atomic+Operations
 func (c *Collection) UpdateAll(selector interface{}, update interface{}) (info *ChangeInfo, err error) {
-	if selector == nil {
-		selector = bson.D{}
+	if UseMongoDriver {
+		db := c.Database.Session.driverDatabase
+
+		_, err = db.Collection(c.Name).UpdateMany(context.Background(), selector, update)
+		return nil, err
+
+	} else {
+		if selector == nil {
+			selector = bson.D{}
+		}
+		op := updateOp{
+			Collection: c.FullName,
+			Selector:   selector,
+			Update:     update,
+			Flags:      2,
+			Multi:      true,
+		}
+		lerr, err := c.writeOp(&op, true)
+		if err == nil && lerr != nil {
+			info = &ChangeInfo{Updated: lerr.modified, Matched: lerr.N}
+		}
+		return info, err
 	}
-	op := updateOp{
-		Collection: c.FullName,
-		Selector:   selector,
-		Update:     update,
-		Flags:      2,
-		Multi:      true,
-	}
-	lerr, err := c.writeOp(&op, true)
-	if err == nil && lerr != nil {
-		info = &ChangeInfo{Updated: lerr.modified, Matched: lerr.N}
-	}
-	return info, err
 }
 
 // Upsert finds a single document matching the provided selector document
@@ -3172,14 +3231,24 @@ func (c *Collection) UpsertId(id interface{}, update interface{}) (info *ChangeI
 //
 //	http://www.mongodb.org/display/DOCS/Removing
 func (c *Collection) Remove(selector interface{}) error {
-	if selector == nil {
-		selector = bson.D{}
+	if UseMongoDriver {
+		if selector == nil {
+			selector = bson.D{}
+		}
+
+		db := c.Database.Session.driverDatabase
+		_, err := db.Collection(c.Name).DeleteOne(context.Background(), selector)
+		return err
+	} else {
+		if selector == nil {
+			selector = bson.D{}
+		}
+		lerr, err := c.writeOp(&deleteOp{c.FullName, selector, 1, 1}, true)
+		if err == nil && lerr != nil && lerr.N == 0 {
+			return ErrNotFound
+		}
+		return err
 	}
-	lerr, err := c.writeOp(&deleteOp{c.FullName, selector, 1, 1}, true)
-	if err == nil && lerr != nil && lerr.N == 0 {
-		return ErrNotFound
-	}
-	return err
 }
 
 // RemoveId is a convenience helper equivalent to:
@@ -3188,7 +3257,15 @@ func (c *Collection) Remove(selector interface{}) error {
 //
 // See the Remove method for more details.
 func (c *Collection) RemoveId(id interface{}) error {
-	return c.Remove(bson.D{{Name: "_id", Value: id}})
+	if UseMongoDriver {
+		db := c.Database.Session.driverDatabase
+
+		filter := bson.M{"_id": id}
+		_, err := db.Collection(c.Name).DeleteOne(context.Background(), filter)
+		return err
+	} else {
+		return c.Remove(bson.D{{Name: "_id", Value: id}})
+	}
 }
 
 // RemoveAll finds all documents matching the provided selector document
@@ -3200,14 +3277,24 @@ func (c *Collection) RemoveId(id interface{}) error {
 //
 //	http://www.mongodb.org/display/DOCS/Removing
 func (c *Collection) RemoveAll(selector interface{}) (info *ChangeInfo, err error) {
-	if selector == nil {
-		selector = bson.D{}
+	if UseMongoDriver {
+		if selector == nil {
+			selector = bson.D{}
+		}
+
+		db := c.Database.Session.driverDatabase
+		_, err := db.Collection(c.Name).DeleteMany(context.Background(), selector)
+		return nil, err
+	} else {
+		if selector == nil {
+			selector = bson.D{}
+		}
+		lerr, err := c.writeOp(&deleteOp{c.FullName, selector, 0, 0}, true)
+		if err == nil && lerr != nil {
+			info = &ChangeInfo{Removed: lerr.N, Matched: lerr.N}
+		}
+		return info, err
 	}
-	lerr, err := c.writeOp(&deleteOp{c.FullName, selector, 0, 0}, true)
-	if err == nil && lerr != nil {
-		info = &ChangeInfo{Removed: lerr.N, Matched: lerr.N}
-	}
-	return info, err
 }
 
 // DropDatabase removes the entire database including all of its collections.
@@ -3699,59 +3786,75 @@ Error:
 // received document so that any other custom values may be obtained if
 // desired.
 func (q *Query) One(result interface{}) (err error) {
-	q.m.Lock()
-	session := q.session
-	op := q.op // Copy.
-	q.m.Unlock()
+	if UseMongoDriver {
+		db := q.session.driverDatabase
 
-	socket, err := session.acquireSocket(true)
-	if err != nil {
+		// get only collection name from full name, ex: only user from data_store.user
+		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
+
+		err = db.Collection(collectionName).FindOne(
+			context.Background(),
+			q.op.query,
+		).Decode(result)
+
+		fmt.Println("nagatest1, collection name:", collectionName)
+		fmt.Println("nagatest1, one result:", result)
 		return err
-	}
-	defer socket.Release()
+	} else {
+		q.m.Lock()
+		session := q.session
+		op := q.op // Copy.
+		q.m.Unlock()
 
-	op.limit = -1
-
-	session.prepareQuery(&op)
-
-	expectFindReply := prepareFindOp(socket, &op, 1)
-
-	data, err := socket.SimpleQuery(&op)
-	if err != nil {
-		return err
-	}
-	if data == nil {
-		return ErrNotFound
-	}
-	if expectFindReply {
-		var findReply struct {
-			Ok     bool
-			Code   int
-			Errmsg string
-			Cursor cursorData
-		}
-		err = bson.Unmarshal(data, &findReply)
+		socket, err := session.acquireSocket(true)
 		if err != nil {
 			return err
 		}
-		if !findReply.Ok && findReply.Errmsg != "" {
-			return &QueryError{Code: findReply.Code, Message: findReply.Errmsg}
-		}
-		if len(findReply.Cursor.FirstBatch) == 0 {
-			return ErrNotFound
-		}
-		data = findReply.Cursor.FirstBatch[0].Data
-	}
-	if result != nil {
-		err = bson.Unmarshal(data, result)
-		if err == nil {
-			debugf("Query %p document unmarshaled: %#v", q, result)
-		} else {
-			debugf("Query %p document unmarshaling failed: %#v", q, err)
+		defer socket.Release()
+
+		op.limit = -1
+
+		session.prepareQuery(&op)
+
+		expectFindReply := prepareFindOp(socket, &op, 1)
+
+		data, err := socket.SimpleQuery(&op)
+		if err != nil {
 			return err
 		}
+		if data == nil {
+			return ErrNotFound
+		}
+		if expectFindReply {
+			var findReply struct {
+				Ok     bool
+				Code   int
+				Errmsg string
+				Cursor cursorData
+			}
+			err = bson.Unmarshal(data, &findReply)
+			if err != nil {
+				return err
+			}
+			if !findReply.Ok && findReply.Errmsg != "" {
+				return &QueryError{Code: findReply.Code, Message: findReply.Errmsg}
+			}
+			if len(findReply.Cursor.FirstBatch) == 0 {
+				return ErrNotFound
+			}
+			data = findReply.Cursor.FirstBatch[0].Data
+		}
+		if result != nil {
+			err = bson.Unmarshal(data, result)
+			if err == nil {
+				debugf("Query %p document unmarshaled: %#v", q, result)
+			} else {
+				debugf("Query %p document unmarshaling failed: %#v", q, err)
+				return err
+			}
+		}
+		return checkQueryError(op.collection, data)
 	}
-	return checkQueryError(op.collection, data)
 }
 
 // prepareFindOp translates op from being an old-style wire protocol query into
@@ -4472,7 +4575,27 @@ func (iter *Iter) All(result interface{}) error {
 
 // All works like Iter.All.
 func (q *Query) All(result interface{}) error {
-	return q.Iter().All(result)
+	if UseMongoDriver {
+		db := q.session.driverDatabase
+
+		// get only collection name from full name, ex: only user from data_store.user
+		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
+
+		opts := options.Find().SetProjection(q.op.selector).SetSort(q.op.options.OrderBy).SetLimit(int64(q.limit)).SetSkip(int64(q.op.skip))
+
+		cur, err := db.Collection(collectionName).Find(
+			context.Background(),
+			q.op.query,
+			opts,
+		)
+		if err != nil {
+			return err
+		}
+		err = cur.All(context.Background(), result)
+		return err
+	} else {
+		return q.Iter().All(result)
+	}
 }
 
 // For method is obsolete and will be removed in a future release.
@@ -4614,30 +4737,40 @@ type countCmd struct {
 
 // Count returns the total number of documents in the result set.
 func (q *Query) Count() (n int, err error) {
-	q.m.Lock()
-	session := q.session
-	op := q.op
-	limit := q.limit
-	q.m.Unlock()
+	if UseMongoDriver {
+		db := q.session.driverDatabase
+		// get only collection name from full name, ex: only user from data_store.user
+		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
 
-	c := strings.Index(op.collection, ".")
-	if c < 0 {
-		return 0, errors.New("Bad collection name: " + op.collection)
+		count, err := db.Collection(collectionName).CountDocuments(context.Background(), q.query)
+
+		return int(count), err
+	} else {
+		q.m.Lock()
+		session := q.session
+		op := q.op
+		limit := q.limit
+		q.m.Unlock()
+
+		c := strings.Index(op.collection, ".")
+		if c < 0 {
+			return 0, errors.New("Bad collection name: " + op.collection)
+		}
+
+		dbname := op.collection[:c]
+		cname := op.collection[c+1:]
+		query := op.query
+		if query == nil {
+			query = bson.D{}
+		}
+		// not checking the error because if type assertion fails, we
+		// simply want a Zero bson.D
+		hint, _ := q.op.options.Hint.(bson.D)
+		result := struct{ N int }{}
+		err = session.DB(dbname).Run(countCmd{cname, query, limit, op.skip, hint, op.options.MaxTimeMS, op.options.Collation}, &result)
+
+		return result.N, err
 	}
-
-	dbname := op.collection[:c]
-	cname := op.collection[c+1:]
-	query := op.query
-	if query == nil {
-		query = bson.D{}
-	}
-	// not checking the error because if type assertion fails, we
-	// simply want a Zero bson.D
-	hint, _ := q.op.options.Hint.(bson.D)
-	result := struct{ N int }{}
-	err = session.DB(dbname).Run(countCmd{cname, query, limit, op.skip, hint, op.options.MaxTimeMS, op.options.Collation}, &result)
-
-	return result.N, err
 }
 
 // Count returns the total number of documents in the collection.
@@ -4662,25 +4795,34 @@ type distinctCmd struct {
 //
 //	http://www.mongodb.org/display/DOCS/Aggregation
 func (q *Query) Distinct(key string, result interface{}) error {
-	q.m.Lock()
-	session := q.session
-	op := q.op // Copy.
-	q.m.Unlock()
-
-	c := strings.Index(op.collection, ".")
-	if c < 0 {
-		return errors.New("Bad collection name: " + op.collection)
-	}
-
-	dbname := op.collection[:c]
-	cname := op.collection[c+1:]
-
-	var doc struct{ Values bson.Raw }
-	err := session.DB(dbname).Run(distinctCmd{cname, key, op.query}, &doc)
-	if err != nil {
+	if UseMongoDriver {
+		var err error
+		db := q.session.driverDatabase
+		// get only collection name from full name, ex: only user from data_store.user
+		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
+		result, err = db.Collection(collectionName).Distinct(context.Background(), key, q.query)
 		return err
+	} else {
+		q.m.Lock()
+		session := q.session
+		op := q.op // Copy.
+		q.m.Unlock()
+
+		c := strings.Index(op.collection, ".")
+		if c < 0 {
+			return errors.New("Bad collection name: " + op.collection)
+		}
+
+		dbname := op.collection[:c]
+		cname := op.collection[c+1:]
+
+		var doc struct{ Values bson.Raw }
+		err := session.DB(dbname).Run(distinctCmd{cname, key, op.query}, &doc)
+		if err != nil {
+			return err
+		}
+		return doc.Values.Unmarshal(result)
 	}
-	return doc.Values.Unmarshal(result)
 }
 
 type mapReduceCmd struct {
@@ -4950,94 +5092,106 @@ type valueResult struct {
 //	http://www.mongodb.org/display/DOCS/Updating
 //	http://www.mongodb.org/display/DOCS/Atomic+Operations
 func (q *Query) Apply(change Change, result interface{}) (info *ChangeInfo, err error) {
+	if UseMongoDriver {
+		db := q.session.driverDatabase
+		// get only collection name from full name, ex: only user from data_store.user
+		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
 
-	q.m.Lock()
-	session := q.session
-	op := q.op // Copy.
-	q.m.Unlock()
-
-	c := strings.Index(op.collection, ".")
-	if c < 0 {
-		return nil, errors.New("bad collection name: " + op.collection)
-	}
-
-	dbname := op.collection[:c]
-	cname := op.collection[c+1:]
-
-	// https://docs.mongodb.com/manual/reference/command/findAndModify/#dbcmd.findAndModify
-	session.m.RLock()
-	safeOp := session.safeOp
-	session.m.RUnlock()
-	var writeConcern interface{}
-	if safeOp == nil {
-		writeConcern = bson.D{{Name: "w", Value: 0}}
-	} else {
-		writeConcern = safeOp.query.(*getLastError)
-	}
-
-	cmd := findModifyCmd{
-		Collection:   cname,
-		Update:       change.Update,
-		Upsert:       change.Upsert,
-		Remove:       change.Remove,
-		New:          change.ReturnNew,
-		Query:        op.query,
-		Sort:         op.options.OrderBy,
-		Fields:       op.selector,
-		WriteConcern: writeConcern,
-	}
-
-	session = session.Clone()
-	defer session.Close()
-	session.SetMode(Strong, false)
-
-	var doc valueResult
-	for i := 0; i < maxUpsertRetries; i++ {
-		err = session.DB(dbname).Run(&cmd, &doc)
-		if err == nil {
-			break
+		opts := options.FindOneAndUpdateOptions{
+			Sort:       q.op.options.OrderBy,
+			Projection: q.op.selector,
 		}
-		if change.Upsert && IsDup(err) && i+1 < maxUpsertRetries {
-			// Retry duplicate key errors on upserts.
-			// https://docs.mongodb.com/v3.2/reference/method/db.collection.update/#use-unique-indexes
-			continue
-		}
-		if qerr, ok := err.(*QueryError); ok && qerr.Message == "No matching object found" {
-			return nil, ErrNotFound
-		}
+		err = db.Collection(collectionName).FindOneAndUpdate(context.Background(), q.query, change.Update, &opts).Decode(result)
 		return nil, err
-	}
-	if doc.LastError.N == 0 {
-		return nil, ErrNotFound
-	}
-	if doc.Value.Kind != 0x0A && result != nil {
-		err = doc.Value.Unmarshal(result)
-		if err != nil {
+	} else {
+		q.m.Lock()
+		session := q.session
+		op := q.op // Copy.
+		q.m.Unlock()
+
+		c := strings.Index(op.collection, ".")
+		if c < 0 {
+			return nil, errors.New("bad collection name: " + op.collection)
+		}
+
+		dbname := op.collection[:c]
+		cname := op.collection[c+1:]
+
+		// https://docs.mongodb.com/manual/reference/command/findAndModify/#dbcmd.findAndModify
+		session.m.RLock()
+		safeOp := session.safeOp
+		session.m.RUnlock()
+		var writeConcern interface{}
+		if safeOp == nil {
+			writeConcern = bson.D{{Name: "w", Value: 0}}
+		} else {
+			writeConcern = safeOp.query.(*getLastError)
+		}
+
+		cmd := findModifyCmd{
+			Collection:   cname,
+			Update:       change.Update,
+			Upsert:       change.Upsert,
+			Remove:       change.Remove,
+			New:          change.ReturnNew,
+			Query:        op.query,
+			Sort:         op.options.OrderBy,
+			Fields:       op.selector,
+			WriteConcern: writeConcern,
+		}
+
+		session = session.Clone()
+		defer session.Close()
+		session.SetMode(Strong, false)
+
+		var doc valueResult
+		for i := 0; i < maxUpsertRetries; i++ {
+			err = session.DB(dbname).Run(&cmd, &doc)
+			if err == nil {
+				break
+			}
+			if change.Upsert && IsDup(err) && i+1 < maxUpsertRetries {
+				// Retry duplicate key errors on upserts.
+				// https://docs.mongodb.com/v3.2/reference/method/db.collection.update/#use-unique-indexes
+				continue
+			}
+			if qerr, ok := err.(*QueryError); ok && qerr.Message == "No matching object found" {
+				return nil, ErrNotFound
+			}
 			return nil, err
 		}
+		if doc.LastError.N == 0 {
+			return nil, ErrNotFound
+		}
+		if doc.Value.Kind != 0x0A && result != nil {
+			err = doc.Value.Unmarshal(result)
+			if err != nil {
+				return nil, err
+			}
+		}
+		info = &ChangeInfo{}
+		lerr := &doc.LastError
+		if lerr.UpdatedExisting {
+			info.Updated = lerr.N
+			info.Matched = lerr.N
+		} else if change.Remove {
+			info.Removed = lerr.N
+			info.Matched = lerr.N
+		} else if change.Upsert {
+			info.UpsertedId = lerr.UpsertedId
+		}
+		if doc.ConcernError.Code != 0 {
+			var lerr LastError
+			e := doc.ConcernError
+			lerr.Code = e.Code
+			lerr.Err = e.ErrMsg
+			err = &lerr
+			// handleEventsFunc(cname,  change.Update, op.query)
+			return info, err
+		}
+		handleEventsFunc(cname, op.query, change.Update)
+		return info, nil
 	}
-	info = &ChangeInfo{}
-	lerr := &doc.LastError
-	if lerr.UpdatedExisting {
-		info.Updated = lerr.N
-		info.Matched = lerr.N
-	} else if change.Remove {
-		info.Removed = lerr.N
-		info.Matched = lerr.N
-	} else if change.Upsert {
-		info.UpsertedId = lerr.UpsertedId
-	}
-	if doc.ConcernError.Code != 0 {
-		var lerr LastError
-		e := doc.ConcernError
-		lerr.Code = e.Code
-		lerr.Err = e.ErrMsg
-		err = &lerr
-		// handleEventsFunc(cname,  change.Update, op.query)
-		return info, err
-	}
-	handleEventsFunc(cname, op.query, change.Update)
-	return info, nil
 }
 
 // The BuildInfo type encapsulates details about the running MongoDB server.
