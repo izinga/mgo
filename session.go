@@ -2577,8 +2577,12 @@ func (s *Session) SelectServers(tags ...bson.D) {
 
 // Ping runs a trivial ping command just to get in touch with the server.
 func (s *Session) Ping() error {
-	return s.driverDatabase.Client().Ping(context.Background(), nil)
-	// return s.Run("ping", nil)
+	if UseMongoDriver {
+		return s.driverDatabase.Client().Ping(context.Background(), nil)
+	} else {
+		return s.Run("ping", nil)
+	}
+
 }
 
 // Fsync flushes in-memory writes to disk on the server the session
@@ -2652,10 +2656,11 @@ func (c *Collection) Find(query interface{}) *Query {
 	session.m.RLock()
 	q := &Query{session: session, query: session.queryConfig}
 	session.m.RUnlock()
-
 	q.op.query = query
-	if query == nil {
-		q.op.query = bson.M{}
+	if UseMongoDriver {
+		if query == nil {
+			q.op.query = bson.M{}
+		}
 	}
 	q.op.collection = c.FullName
 	return q
