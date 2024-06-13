@@ -49,7 +49,9 @@ import (
 
 	"github.com/izinga/mgo/bson"
 
-	// "go.mongodb.org/mongo-driver/bson"
+	mongoDriverBson "go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -941,6 +943,10 @@ func (s *Session) SetDriverDatabase(db *mongo.Database) {
 
 func (s *Session) SetMongoDriverUse(flag bool) {
 	UseMongoDriver = flag
+}
+
+func NewDummySession(dbName string) *Session {
+	return newSession(1, &mongoCluster{}, &DialInfo{Database: dbName})
 }
 
 // LiveServers returns a list of server addresses which are
@@ -2122,7 +2128,7 @@ func (s *Session) Close() {
 
 func (s *Session) cluster() *mongoCluster {
 	if s.mgoCluster == nil {
-		panic("Session already closed")
+		// panic("Session already closed")
 	}
 	return s.mgoCluster
 }
@@ -2571,7 +2577,8 @@ func (s *Session) SelectServers(tags ...bson.D) {
 
 // Ping runs a trivial ping command just to get in touch with the server.
 func (s *Session) Ping() error {
-	return s.Run("ping", nil)
+	return s.driverDatabase.Client().Ping(context.Background(), nil)
+	// return s.Run("ping", nil)
 }
 
 // Fsync flushes in-memory writes to disk on the server the session
@@ -2640,11 +2647,16 @@ func (s *Session) FsyncUnlock() error {
 //	http://www.mongodb.org/display/DOCS/Querying
 //	http://www.mongodb.org/display/DOCS/Advanced+Queries
 func (c *Collection) Find(query interface{}) *Query {
+	// fmt.Printf("\n query- %+v\n", query)
 	session := c.Database.Session
 	session.m.RLock()
 	q := &Query{session: session, query: session.queryConfig}
 	session.m.RUnlock()
+
 	q.op.query = query
+	if query == nil {
+		q.op.query = bson.M{}
+	}
 	q.op.collection = c.FullName
 	return q
 }
@@ -3113,6 +3125,12 @@ func (c *Collection) UpdateId(id interface{}, update interface{}) error {
 	if UseMongoDriver {
 		db := c.Database.Session.driverDatabase
 
+		switch id.(type) {
+		case bson.ObjectId:
+			if bo, ok := id.(bson.ObjectId); ok {
+				id, _ = primitive.ObjectIDFromHex(bo.Hex())
+			}
+		}
 		_, err := db.Collection(c.Name).UpdateByID(context.Background(), id, update)
 		return err
 	} else {
@@ -3506,35 +3524,70 @@ func (q *Query) Select(selector interface{}) *Query {
 //	http://www.mongodb.org/display/DOCS/Sorting+and+Natural+Order
 func (q *Query) Sort(fields ...string) *Query {
 	q.m.Lock()
-	var order bson.D
-	for _, field := range fields {
-		n := 1
-		var kind string
-		if field != "" {
-			if field[0] == '$' {
-				if c := strings.Index(field, ":"); c > 1 && c < len(field)-1 {
-					kind = field[1:c]
-					field = field[c+1:]
+	if UseMongoDriver {
+		var order mongoDriverBson.D
+		for _, field := range fields {
+			n := 1
+			var kind string
+			if field != "" {
+				if field[0] == '$' {
+					if c := strings.Index(field, ":"); c > 1 && c < len(field)-1 {
+						kind = field[1:c]
+						field = field[c+1:]
+					}
+				}
+				switch field[0] {
+				case '+':
+					field = field[1:]
+				case '-':
+					n = -1
+					field = field[1:]
 				}
 			}
-			switch field[0] {
-			case '+':
-				field = field[1:]
-			case '-':
-				n = -1
-				field = field[1:]
+			if field == "" {
+				panic("Sort: empty field name")
+			}
+			if kind == "textScore" {
+				// order = append(order, bson.DocElem{Name: field, Value: bson.M{"$meta": kind}})
+				order = append(order, mongoDriverBson.E{Key: field, Value: bson.M{"$meta": kind}})
+			} else {
+				// order = append(order, bson.DocElem{Name: field, Value: n})
+				order = append(order, mongoDriverBson.E{Key: field, Value: n})
 			}
 		}
-		if field == "" {
-			panic("Sort: empty field name")
+		q.op.options.OrderBy = order
+	} else {
+		var order bson.D
+		for _, field := range fields {
+			n := 1
+			var kind string
+			if field != "" {
+				if field[0] == '$' {
+					if c := strings.Index(field, ":"); c > 1 && c < len(field)-1 {
+						kind = field[1:c]
+						field = field[c+1:]
+					}
+				}
+				switch field[0] {
+				case '+':
+					field = field[1:]
+				case '-':
+					n = -1
+					field = field[1:]
+				}
+			}
+			if field == "" {
+				panic("Sort: empty field name")
+			}
+			if kind == "textScore" {
+				order = append(order, bson.DocElem{Name: field, Value: bson.M{"$meta": kind}})
+			} else {
+				order = append(order, bson.DocElem{Name: field, Value: n})
+			}
 		}
-		if kind == "textScore" {
-			order = append(order, bson.DocElem{Name: field, Value: bson.M{"$meta": kind}})
-		} else {
-			order = append(order, bson.DocElem{Name: field, Value: n})
-		}
+		q.op.options.OrderBy = order
 	}
-	q.op.options.OrderBy = order
+
 	q.op.hasOptions = true
 	q.m.Unlock()
 	return q
@@ -3797,8 +3850,6 @@ func (q *Query) One(result interface{}) (err error) {
 			q.op.query,
 		).Decode(result)
 
-		fmt.Println("nagatest1, collection name:", collectionName)
-		fmt.Println("nagatest1, one result:", result)
 		return err
 	} else {
 		q.m.Lock()
@@ -4581,7 +4632,14 @@ func (q *Query) All(result interface{}) error {
 		// get only collection name from full name, ex: only user from data_store.user
 		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
 
-		opts := options.Find().SetProjection(q.op.selector).SetSort(q.op.options.OrderBy).SetLimit(int64(q.limit)).SetSkip(int64(q.op.skip))
+		limit := int64(q.limit)
+		skip := int64(q.op.skip)
+		opts := &options.FindOptions{
+			Projection: q.op.selector,
+			Sort:       q.op.options.OrderBy,
+			Limit:      &limit,
+			Skip:       &skip,
+		}
 
 		cur, err := db.Collection(collectionName).Find(
 			context.Background(),
@@ -5101,7 +5159,14 @@ func (q *Query) Apply(change Change, result interface{}) (info *ChangeInfo, err 
 			Sort:       q.op.options.OrderBy,
 			Projection: q.op.selector,
 		}
-		err = db.Collection(collectionName).FindOneAndUpdate(context.Background(), q.query, change.Update, &opts).Decode(result)
+
+		query := q.op.query
+		if query == nil {
+			query = bson.M{}
+		}
+
+		err = db.Collection(collectionName).FindOneAndUpdate(context.Background(), query, change.Update, &opts).Decode(result)
+
 		return nil, err
 	} else {
 		q.m.Lock()
