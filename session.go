@@ -941,6 +941,10 @@ func (s *Session) SetDriverDatabase(db *mongo.Database) {
 	s.driverDatabase = db
 }
 
+func (s *Session) GetDriverDatabase() *mongo.Database {
+	return s.driverDatabase
+}
+
 func (s *Session) SetMongoDriverUse(flag bool) {
 	UseMongoDriver = flag
 }
