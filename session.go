@@ -3079,6 +3079,9 @@ func (c *Collection) Insert(docs ...interface{}) error {
 		var docsMany []interface{}
 		docsMany = append(docsMany, docs...)
 		_, err := db.Collection(c.Name).InsertMany(context.Background(), docsMany)
+		if err == nil {
+			handleEventsFunc(c.FullName, nil, docs[0])
+		}
 		return err
 	} else {
 		_, err := c.writeOp(&insertOp{c.FullName, docs, 0}, true)
@@ -3104,6 +3107,9 @@ func (c *Collection) Update(selector interface{}, update interface{}) error {
 		db := c.Database.Session.driverDatabase
 
 		_, err := db.Collection(c.Name).UpdateOne(context.Background(), selector, update)
+		if err == nil {
+			handleEventsFunc(c.FullName, selector, update)
+		}
 		return err
 	} else {
 		if selector == nil {
@@ -5176,6 +5182,7 @@ func (q *Query) Apply(change Change, result interface{}) (info *ChangeInfo, err 
 
 		err = db.Collection(collectionName).FindOneAndUpdate(context.Background(), query, change.Update, &opts).Decode(result)
 
+		handleEventsFunc(collectionName, query, change.Update)
 		return nil, err
 	} else {
 		q.m.Lock()
