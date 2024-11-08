@@ -168,9 +168,9 @@ type Session struct {
 	bypassValidation bool
 	slaveOk          bool
 
-	dialInfo *DialInfo
-
-	driverDatabase *mongo.Database
+	dialInfo      *DialInfo
+	mongoDBClient *mongo.Client
+	// driverDatabase *mongo.Database
 }
 
 // Database holds collections of documents
@@ -930,19 +930,25 @@ func copySession(session *Session, keepCreds bool) (s *Session) {
 		bypassValidation: session.bypassValidation,
 		slaveOk:          session.slaveOk,
 		dialInfo:         session.dialInfo,
-		driverDatabase:   session.driverDatabase,
+		mongoDBClient:    session.mongoDBClient,
+		// driverDatabase:   session.driverDatabase,
 	}
 	s = &scopy
-	debugf("New session %p on cluster %p (copy from %p)", s, cluster, session)
+	// fmt.Println("\nNew session %p on cluster %p (copy from %p)\n", s, cluster, session)
 	return s
 }
 
-func (s *Session) SetDriverDatabase(db *mongo.Database) {
-	s.driverDatabase = db
+func (s *Session) SetDriverDatabase(dataBaseName string) {
+	s.defaultdb = dataBaseName
+	// s.driverDatabase = db
+}
+func (s *Session) SetMongoDriverClient(client *mongo.Client) {
+	s.mongoDBClient = client
+	// s.driverDatabase = db
 }
 
 func (s *Session) GetDriverDatabase() *mongo.Database {
-	return s.driverDatabase
+	return s.mongoDBClient.Database(s.defaultdb)
 }
 
 func (s *Session) SetMongoDriverUse(flag bool) {
@@ -2097,9 +2103,12 @@ func (s *Session) New() *Session {
 // Copy works just like New, but preserves the exact authentication
 // information from the original session.
 func (s *Session) Copy() *Session {
+	// fmt.Println("We are coping the session")
 	s.m.Lock()
 	scopy := copySession(s, true)
 	s.m.Unlock()
+
+	// fmt.Println("copy the session completed")
 	scopy.Refresh()
 	return scopy
 }
@@ -2111,9 +2120,12 @@ func (s *Session) Copy() *Session {
 // strong or monotonic session.  That said, it also means that long operations
 // may cause other goroutines using the original session to wait.
 func (s *Session) Clone() *Session {
+	// fmt.Println("We are cloning the session")
 	s.m.Lock()
+	// fmt.Println("We are cloning the session after local lock")
 	scopy := copySession(s, true)
 	s.m.Unlock()
+	// fmt.Println("cloning the session completed")
 	return scopy
 }
 
@@ -2582,7 +2594,7 @@ func (s *Session) SelectServers(tags ...bson.D) {
 // Ping runs a trivial ping command just to get in touch with the server.
 func (s *Session) Ping() error {
 	if UseMongoDriver {
-		return s.driverDatabase.Client().Ping(context.Background(), nil)
+		return s.mongoDBClient.Ping(context.Background(), nil)
 	} else {
 		return s.Run("ping", nil)
 	}
@@ -2916,7 +2928,7 @@ func (iter *Iter) State() (int64, []bson.Raw) {
 // All works like Iter.All.
 func (p *Pipe) All(result interface{}) error {
 	if UseMongoDriver {
-		db := p.session.driverDatabase
+		db := p.session.GetDriverDatabase()
 		collectionName := p.collection.Name
 		cur, err := db.Collection(collectionName).Aggregate(context.Background(), p.pipeline)
 		if err != nil {
@@ -3074,7 +3086,7 @@ func IsDup(err error) bool {
 // be of type *LastError.
 func (c *Collection) Insert(docs ...interface{}) error {
 	if UseMongoDriver {
-		db := c.Database.Session.driverDatabase
+		db := c.Database.Session.GetDriverDatabase()
 
 		var docsMany []interface{}
 		docsMany = append(docsMany, docs...)
@@ -3104,7 +3116,7 @@ func (c *Collection) Insert(docs ...interface{}) error {
 //	http://www.mongodb.org/display/DOCS/Atomic+Operations
 func (c *Collection) Update(selector interface{}, update interface{}) error {
 	if UseMongoDriver {
-		db := c.Database.Session.driverDatabase
+		db := c.Database.Session.GetDriverDatabase()
 
 		_, err := db.Collection(c.Name).UpdateOne(context.Background(), selector, update)
 		if err == nil {
@@ -3138,7 +3150,7 @@ func (c *Collection) Update(selector interface{}, update interface{}) error {
 // See the Update method for more details.
 func (c *Collection) UpdateId(id interface{}, update interface{}) error {
 	if UseMongoDriver {
-		db := c.Database.Session.driverDatabase
+		db := c.Database.Session.GetDriverDatabase()
 
 		switch id.(type) {
 		case bson.ObjectId:
@@ -3177,7 +3189,7 @@ type ChangeInfo struct {
 //	http://www.mongodb.org/display/DOCS/Atomic+Operations
 func (c *Collection) UpdateAll(selector interface{}, update interface{}) (info *ChangeInfo, err error) {
 	if UseMongoDriver {
-		db := c.Database.Session.driverDatabase
+		db := c.Database.Session.GetDriverDatabase()
 
 		_, err = db.Collection(c.Name).UpdateMany(context.Background(), selector, update)
 		return nil, err
@@ -3269,7 +3281,7 @@ func (c *Collection) Remove(selector interface{}) error {
 			selector = bson.D{}
 		}
 
-		db := c.Database.Session.driverDatabase
+		db := c.Database.Session.GetDriverDatabase()
 		_, err := db.Collection(c.Name).DeleteOne(context.Background(), selector)
 		return err
 	} else {
@@ -3291,7 +3303,7 @@ func (c *Collection) Remove(selector interface{}) error {
 // See the Remove method for more details.
 func (c *Collection) RemoveId(id interface{}) error {
 	if UseMongoDriver {
-		db := c.Database.Session.driverDatabase
+		db := c.Database.Session.GetDriverDatabase()
 
 		filter := bson.M{"_id": id}
 		_, err := db.Collection(c.Name).DeleteOne(context.Background(), filter)
@@ -3315,7 +3327,7 @@ func (c *Collection) RemoveAll(selector interface{}) (info *ChangeInfo, err erro
 			selector = bson.D{}
 		}
 
-		db := c.Database.Session.driverDatabase
+		db := c.Database.Session.GetDriverDatabase()
 		_, err := db.Collection(c.Name).DeleteMany(context.Background(), selector)
 		return nil, err
 	} else {
@@ -3855,7 +3867,7 @@ Error:
 // desired.
 func (q *Query) One(result interface{}) (err error) {
 	if UseMongoDriver {
-		db := q.session.driverDatabase
+		db := q.session.GetDriverDatabase()
 
 		// get only collection name from full name, ex: only user from data_store.user
 		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
@@ -4642,7 +4654,7 @@ func (iter *Iter) All(result interface{}) error {
 // All works like Iter.All.
 func (q *Query) All(result interface{}) error {
 	if UseMongoDriver {
-		db := q.session.driverDatabase
+		db := q.session.GetDriverDatabase()
 
 		// get only collection name from full name, ex: only user from data_store.user
 		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
@@ -4811,7 +4823,7 @@ type countCmd struct {
 // Count returns the total number of documents in the result set.
 func (q *Query) Count() (n int, err error) {
 	if UseMongoDriver {
-		db := q.session.driverDatabase
+		db := q.session.GetDriverDatabase()
 		// get only collection name from full name, ex: only user from data_store.user
 		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
 
@@ -4870,7 +4882,7 @@ type distinctCmd struct {
 func (q *Query) Distinct(key string, result interface{}) error {
 	if UseMongoDriver {
 		var err error
-		db := q.session.driverDatabase
+		db := q.session.GetDriverDatabase()
 		// get only collection name from full name, ex: only user from data_store.user
 		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
 		result, err = db.Collection(collectionName).Distinct(context.Background(), key, q.query)
@@ -5166,7 +5178,7 @@ type valueResult struct {
 //	http://www.mongodb.org/display/DOCS/Atomic+Operations
 func (q *Query) Apply(change Change, result interface{}) (info *ChangeInfo, err error) {
 	if UseMongoDriver {
-		db := q.session.driverDatabase
+		db := q.session.GetDriverDatabase()
 		// get only collection name from full name, ex: only user from data_store.user
 		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
 
@@ -5337,7 +5349,8 @@ func (s *Session) BuildInfo() (info BuildInfo, err error) {
 // Internal session handling helpers.
 
 func (s *Session) acquireSocket(slaveOk bool) (*mongoSocket, error) {
-
+	socket := s.slaveSocket
+	return socket, nil
 	// Read-only lock to check for previously reserved socket.
 	s.m.RLock()
 	// If there is a slave socket reserved and its use is acceptable, take it as long

@@ -78,30 +78,30 @@ func newCluster(userSeeds []string, info *DialInfo) *mongoCluster {
 
 // Acquire increases the reference count for the cluster.
 func (cluster *mongoCluster) Acquire() {
-	cluster.Lock()
-	cluster.references++
-	debugf("Cluster %p acquired (refs=%d)", cluster, cluster.references)
-	cluster.Unlock()
+	// cluster.Lock()
+	// cluster.references++
+	// debugf("Cluster %p acquired (refs=%d)", cluster, cluster.references)
+	// cluster.Unlock()
 }
 
 // Release decreases the reference count for the cluster. Once
 // it reaches zero, all servers will be closed.
 func (cluster *mongoCluster) Release() {
-	cluster.Lock()
-	if cluster.references == 0 {
-		panic("cluster.Release() with references == 0")
-	}
-	cluster.references--
-	debugf("Cluster %p released (refs=%d)", cluster, cluster.references)
-	if cluster.references == 0 {
-		for _, server := range cluster.servers.Slice() {
-			server.Close()
-		}
-		// Wake up the sync loop so it can die.
-		cluster.syncServers()
-		stats.cluster(-1)
-	}
-	cluster.Unlock()
+	// cluster.Lock()
+	// if cluster.references == 0 {
+	// 	panic("cluster.Release() with references == 0")
+	// }
+	// cluster.references--
+	// debugf("Cluster %p released (refs=%d)", cluster, cluster.references)
+	// if cluster.references == 0 {
+	// 	for _, server := range cluster.servers.Slice() {
+	// 		server.Close()
+	// 	}
+	// 	// Wake up the sync loop so it can die.
+	// 	cluster.syncServers()
+	// 	stats.cluster(-1)
+	// }
+	// cluster.Unlock()
 }
 
 func (cluster *mongoCluster) LiveServers() (servers []string) {

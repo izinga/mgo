@@ -181,7 +181,7 @@ func (gfs *GridFS) Create(name string) (file *GridFile, err error) {
 	file.doc = gfsFile{Id: bson.NewObjectId(), ChunkSize: 255 * 1024, Filename: name}
 
 	if UseMongoDriver {
-		db := file.gfs.Files.Database.Session.driverDatabase
+		db := file.gfs.Files.Database.Session.GetDriverDatabase()
 		bucket, _ := gridfs.NewBucket(db)
 
 		var uploadStream *gridfs.UploadStream
@@ -233,7 +233,7 @@ func (gfs *GridFS) Create(name string) (file *GridFile, err error) {
 func (gfs *GridFS) OpenId(id interface{}) (file *GridFile, err error) {
 	if UseMongoDriver {
 		var doc gfsFile
-		db := gfs.Files.Database.Session.driverDatabase
+		db := gfs.Files.Database.Session.GetDriverDatabase()
 		err = db.Collection(gfs.Files.Name).FindOne(context.Background(), bson.M{"_id": id}).Decode(&doc)
 		if err != nil {
 			return
@@ -363,7 +363,7 @@ func (gfs *GridFS) Find(query interface{}) *Query {
 // RemoveId deletes the file with the provided id from the GridFS.
 func (gfs *GridFS) RemoveId(id interface{}) error {
 	if UseMongoDriver {
-		db := gfs.Files.Database.Session.driverDatabase
+		db := gfs.Files.Database.Session.GetDriverDatabase()
 		bucket, _ := gridfs.NewBucket(db)
 		return bucket.Delete(id)
 
@@ -772,7 +772,7 @@ func (file *GridFile) Seek(offset int64, whence int) (pos int64, err error) {
 // into an io.Reader.
 func (file *GridFile) Read(b []byte) (n int, err error) {
 	if UseMongoDriver {
-		db := file.gfs.Files.Database.Session.driverDatabase
+		db := file.gfs.Files.Database.Session.GetDriverDatabase()
 		bucket, _ := gridfs.NewBucket(db)
 
 		var downloadStream *gridfs.DownloadStream
