@@ -4827,7 +4827,7 @@ func (q *Query) Count() (n int, err error) {
 		// get only collection name from full name, ex: only user from data_store.user
 		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
 
-		count, err := db.Collection(collectionName).CountDocuments(context.Background(), q.query)
+		count, err := db.Collection(collectionName).CountDocuments(context.Background(), q.op.query)
 
 		return int(count), err
 	} else {
