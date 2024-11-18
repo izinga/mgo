@@ -153,17 +153,17 @@ const (
 // multiple goroutines will cause them to share the same underlying socket.
 // See the documentation on Session.SetMode for more details.
 type Session struct {
-	defaultdb        string
-	sourcedb         string
-	syncTimeout      time.Duration
-	consistency      Mode
-	creds            []Credential
-	dialCred         *Credential
-	safeOp           *queryOp
-	mgoCluster       *mongoCluster
-	slaveSocket      *mongoSocket
-	masterSocket     *mongoSocket
-	m                sync.RWMutex
+	defaultdb    string
+	sourcedb     string
+	syncTimeout  time.Duration
+	consistency  Mode
+	creds        []Credential
+	dialCred     *Credential
+	safeOp       *queryOp
+	mgoCluster   *mongoCluster
+	slaveSocket  *mongoSocket
+	masterSocket *mongoSocket
+	// m                sync.RWMutex
 	queryConfig      query
 	bypassValidation bool
 	slaveOk          bool
@@ -915,17 +915,17 @@ func copySession(session *Session, keepCreds bool) (s *Session) {
 		creds = []Credential{*session.dialCred}
 	}
 	scopy := Session{
-		defaultdb:        session.defaultdb,
-		sourcedb:         session.sourcedb,
-		syncTimeout:      session.syncTimeout,
-		consistency:      session.consistency,
-		creds:            creds,
-		dialCred:         session.dialCred,
-		safeOp:           session.safeOp,
-		mgoCluster:       session.mgoCluster,
-		slaveSocket:      session.slaveSocket,
-		masterSocket:     session.masterSocket,
-		m:                sync.RWMutex{},
+		defaultdb:    session.defaultdb,
+		sourcedb:     session.sourcedb,
+		syncTimeout:  session.syncTimeout,
+		consistency:  session.consistency,
+		creds:        creds,
+		dialCred:     session.dialCred,
+		safeOp:       session.safeOp,
+		mgoCluster:   session.mgoCluster,
+		slaveSocket:  session.slaveSocket,
+		masterSocket: session.masterSocket,
+		// m:                sync.RWMutex{},
 		queryConfig:      session.queryConfig,
 		bypassValidation: session.bypassValidation,
 		slaveOk:          session.slaveOk,
@@ -962,9 +962,9 @@ func NewDummySession(dbName string) *Session {
 // LiveServers returns a list of server addresses which are
 // currently known to be alive.
 func (s *Session) LiveServers() (addrs []string) {
-	s.m.RLock()
+	// s.m.RLock()
 	addrs = s.cluster().LiveServers()
-	s.m.RUnlock()
+	// s.m.RUnlock()
 	return addrs
 }
 
@@ -1164,9 +1164,9 @@ func (s *Session) Login(cred *Credential) error {
 		return err
 	}
 
-	s.m.Lock()
+	// s.m.Lock()
 	s.creds = append(s.creds, credCopy)
-	s.m.Unlock()
+	// s.m.Unlock()
 	return nil
 }
 
@@ -1183,7 +1183,7 @@ func (s *Session) socketLogin(socket *mongoSocket) error {
 func (db *Database) Logout() {
 	session := db.Session
 	dbname := db.Name
-	session.m.Lock()
+	// session.m.Lock()
 	found := false
 	for i, cred := range session.creds {
 		if cred.Source == dbname {
@@ -1201,12 +1201,12 @@ func (db *Database) Logout() {
 			session.slaveSocket.Logout(dbname)
 		}
 	}
-	session.m.Unlock()
+	// session.m.Unlock()
 }
 
 // LogoutAll removes all established authentication credentials for the session.
 func (s *Session) LogoutAll() {
-	s.m.Lock()
+	// s.m.Lock()
 	for _, cred := range s.creds {
 		if s.masterSocket != nil {
 			s.masterSocket.Logout(cred.Source)
@@ -1216,7 +1216,7 @@ func (s *Session) LogoutAll() {
 		}
 	}
 	s.creds = s.creds[0:0]
-	s.m.Unlock()
+	// s.m.Unlock()
 }
 
 // User represents a MongoDB user.
@@ -2093,9 +2093,9 @@ func (s *Session) ResetIndexCache() {
 //
 // See the Copy and Clone methods.
 func (s *Session) New() *Session {
-	s.m.Lock()
+	// s.m.Lock()
 	scopy := copySession(s, false)
-	s.m.Unlock()
+	// s.m.Unlock()
 	scopy.Refresh()
 	return scopy
 }
@@ -2104,9 +2104,9 @@ func (s *Session) New() *Session {
 // information from the original session.
 func (s *Session) Copy() *Session {
 	// fmt.Println("We are coping the session")
-	s.m.Lock()
+	// s.m.Lock()
 	scopy := copySession(s, true)
-	s.m.Unlock()
+	// s.m.Unlock()
 
 	// fmt.Println("copy the session completed")
 	scopy.Refresh()
@@ -2121,10 +2121,10 @@ func (s *Session) Copy() *Session {
 // may cause other goroutines using the original session to wait.
 func (s *Session) Clone() *Session {
 	// fmt.Println("We are cloning the session")
-	s.m.Lock()
+	// s.m.Lock()
 	// fmt.Println("We are cloning the session after local lock")
 	scopy := copySession(s, true)
-	s.m.Unlock()
+	// s.m.Unlock()
 	// fmt.Println("cloning the session completed")
 	return scopy
 }
@@ -2132,14 +2132,14 @@ func (s *Session) Clone() *Session {
 // Close terminates the session.  It's a runtime error to use a session
 // after it has been closed.
 func (s *Session) Close() {
-	s.m.Lock()
+	// s.m.Lock()
 	if s.mgoCluster != nil {
 		debugf("Closing session %p", s)
 		s.unsetSocket()
 		s.mgoCluster.Release()
 		s.mgoCluster = nil
 	}
-	s.m.Unlock()
+	// s.m.Unlock()
 }
 
 func (s *Session) cluster() *mongoCluster {
@@ -2152,10 +2152,10 @@ func (s *Session) cluster() *mongoCluster {
 // Refresh puts back any reserved sockets in use and restarts the consistency
 // guarantees according to the current consistency setting for the session.
 func (s *Session) Refresh() {
-	s.m.Lock()
+	// s.m.Lock()
 	s.slaveOk = s.consistency != Strong
 	s.unsetSocket()
-	s.m.Unlock()
+	// s.m.Unlock()
 }
 
 // SetMode changes the consistency mode for the session.
@@ -2201,7 +2201,7 @@ func (s *Session) Refresh() {
 // reserved connection for the session unless refresh is true or the
 // connection is unsuitable (to a secondary server in a Strong session).
 func (s *Session) SetMode(consistency Mode, refresh bool) {
-	s.m.Lock()
+	// s.m.Lock()
 	debugf("Session %p: setting mode %d with refresh=%v (master=%p, slave=%p)", s, consistency, refresh, s.masterSocket, s.slaveSocket)
 	s.consistency = consistency
 	if refresh {
@@ -2212,14 +2212,14 @@ func (s *Session) SetMode(consistency Mode, refresh bool) {
 	} else if s.masterSocket == nil {
 		s.slaveOk = true
 	}
-	s.m.Unlock()
+	// s.m.Unlock()
 }
 
 // Mode returns the current consistency mode for the session.
 func (s *Session) Mode() Mode {
-	s.m.RLock()
+	// s.m.RLock()
 	mode := s.consistency
-	s.m.RUnlock()
+	// s.m.RUnlock()
 	return mode
 }
 
@@ -2228,9 +2228,9 @@ func (s *Session) Mode() Mode {
 // server can't be established. Set it to zero to wait forever. The
 // default value is 7 seconds.
 func (s *Session) SetSyncTimeout(d time.Duration) {
-	s.m.Lock()
+	// s.m.Lock()
 	s.syncTimeout = d
-	s.m.Unlock()
+	// s.m.Unlock()
 }
 
 // SetSocketTimeout is deprecated - use DialInfo read/write timeouts instead.
@@ -2240,7 +2240,7 @@ func (s *Session) SetSyncTimeout(d time.Duration) {
 //
 // The default timeout is 1 minute.
 func (s *Session) SetSocketTimeout(d time.Duration) {
-	s.m.Lock()
+	// s.m.Lock()
 
 	// Set both the read and write timeout, as well as the DialInfo.Timeout for
 	// backwards compatibility,
@@ -2254,20 +2254,20 @@ func (s *Session) SetSocketTimeout(d time.Duration) {
 	if s.slaveSocket != nil {
 		s.slaveSocket.SetTimeout(d)
 	}
-	s.m.Unlock()
+	// s.m.Unlock()
 }
 
 // SetCursorTimeout changes the standard timeout period that the server
 // enforces on created cursors. The only supported value right now is
 // 0, which disables the timeout. The standard server timeout is 10 minutes.
 func (s *Session) SetCursorTimeout(d time.Duration) {
-	s.m.Lock()
+	// s.m.Lock()
 	if d == 0 {
 		s.queryConfig.op.flags |= flagNoCursorTimeout
 	} else {
 		panic("SetCursorTimeout: only 0 (disable timeout) supported for now")
 	}
-	s.m.Unlock()
+	// s.m.Unlock()
 }
 
 // SetPoolLimit sets the maximum number of sockets in use in a single server
@@ -2280,9 +2280,9 @@ func (s *Session) SetCursorTimeout(d time.Duration) {
 // such concurrency "at the door" instead, by properly restricting the amount
 // of used resources and number of goroutines before they are created.
 func (s *Session) SetPoolLimit(limit int) {
-	s.m.Lock()
+	// s.m.Lock()
 	s.dialInfo.PoolLimit = limit
-	s.m.Unlock()
+	// s.m.Unlock()
 }
 
 // SetPoolTimeout sets the maxinum time connection attempts will wait to reuse
@@ -2290,9 +2290,9 @@ func (s *Session) SetPoolLimit(limit int) {
 // the value is exceeded, the attempt to use a session will fail with an error.
 // The default value is zero, which means to wait forever with no timeout.
 func (s *Session) SetPoolTimeout(timeout time.Duration) {
-	s.m.Lock()
+	// s.m.Lock()
 	s.dialInfo.PoolTimeout = timeout
-	s.m.Unlock()
+	// s.m.Unlock()
 }
 
 // SetBypassValidation sets whether the server should bypass the registered
@@ -2307,9 +2307,9 @@ func (s *Session) SetPoolTimeout(timeout time.Duration) {
 //
 //	https://docs.mongodb.org/manual/release-notes/3.2/#bypass-validation
 func (s *Session) SetBypassValidation(bypass bool) {
-	s.m.Lock()
+	// s.m.Lock()
 	s.bypassValidation = bypass
-	s.m.Unlock()
+	// s.m.Unlock()
 }
 
 // SetBatch sets the default batch size used when fetching documents from the
@@ -2324,9 +2324,9 @@ func (s *Session) SetBatch(n int) {
 		// Server interprets 1 as -1 and closes the cursor (!?)
 		n = 2
 	}
-	s.m.Lock()
+	// s.m.Lock()
 	s.queryConfig.op.limit = int32(n)
-	s.m.Unlock()
+	// s.m.Unlock()
 }
 
 // SetPrefetch sets the default point at which the next batch of results will be
@@ -2343,9 +2343,9 @@ func (s *Session) SetBatch(n int) {
 //
 // The default prefetch value is 0.25.
 func (s *Session) SetPrefetch(p float64) {
-	s.m.Lock()
+	// s.m.Lock()
 	s.queryConfig.prefetch = p
-	s.m.Unlock()
+	// s.m.Unlock()
 }
 
 // Safe session safety mode. See SetSafe for details on the Safe type.
@@ -2360,8 +2360,8 @@ type Safe struct {
 
 // Safe returns the current safety mode for the session.
 func (s *Session) Safe() (safe *Safe) {
-	s.m.Lock()
-	defer s.m.Unlock()
+	// s.m.Lock()
+	// defer s.m.Unlock()
 	if s.safeOp != nil {
 		cmd := s.safeOp.query.(*getLastError)
 		safe = &Safe{WTimeout: cmd.WTimeout, FSync: cmd.FSync, J: cmd.J, RMode: s.queryConfig.op.readConcern}
@@ -2449,10 +2449,10 @@ func (s *Session) Safe() (safe *Safe) {
 //	http://www.mongodb.org/display/DOCS/Verifying+Propagation+of+Writes+with+getLastError
 //	http://www.mongodb.org/display/DOCS/Data+Center+Awareness
 func (s *Session) SetSafe(safe *Safe) {
-	s.m.Lock()
+	// s.m.Lock()
 	s.safeOp = nil
 	s.ensureSafe(safe)
-	s.m.Unlock()
+	// s.m.Unlock()
 }
 
 // EnsureSafe compares the provided safety parameters with the ones
@@ -2483,9 +2483,9 @@ func (s *Session) SetSafe(safe *Safe) {
 //	http://www.mongodb.org/display/DOCS/Verifying+Propagation+of+Writes+with+getLastError
 //	http://www.mongodb.org/display/DOCS/Data+Center+Awareness
 func (s *Session) EnsureSafe(safe *Safe) {
-	s.m.Lock()
+	// s.m.Lock()
 	s.ensureSafe(safe)
-	s.m.Unlock()
+	// s.m.Unlock()
 }
 
 func (s *Session) ensureSafe(safe *Safe) {
@@ -2586,9 +2586,9 @@ func (s *Session) runOnSocket(socket *mongoSocket, cmd interface{}, result inter
 //
 //	http://docs.mongodb.org/manual/tutorial/configure-replica-set-tag-sets
 func (s *Session) SelectServers(tags ...bson.D) {
-	s.m.Lock()
+	// s.m.Lock()
 	s.queryConfig.op.serverTags = tags
-	s.m.Unlock()
+	// s.m.Unlock()
 }
 
 // Ping runs a trivial ping command just to get in touch with the server.
@@ -2669,9 +2669,9 @@ func (s *Session) FsyncUnlock() error {
 func (c *Collection) Find(query interface{}) *Query {
 	// fmt.Printf("\n query- %+v\n", query)
 	session := c.Database.Session
-	session.m.RLock()
+	// session.m.RLock()
 	q := &Query{session: session, query: session.queryConfig}
-	session.m.RUnlock()
+	// session.m.RUnlock()
 	q.op.query = query
 	if UseMongoDriver {
 		if query == nil {
@@ -2771,9 +2771,9 @@ type pipeCmdCursor struct {
 
 func (c *Collection) Pipe(pipeline interface{}) *Pipe {
 	session := c.Database.Session
-	session.m.RLock()
+	// session.m.RLock()
 	batchSize := int(session.queryConfig.op.limit)
-	session.m.RUnlock()
+	// session.m.RUnlock()
 	return &Pipe{
 		session:    session,
 		collection: c,
@@ -2852,7 +2852,7 @@ func (p *Pipe) Iter() *Iter {
 func (c *Collection) NewIter(session *Session, firstBatch []bson.Raw, cursorId int64, err error) *Iter {
 	var server *mongoServer
 	csession := c.Database.Session
-	csession.m.RLock()
+	// csession.m.RLock()
 	socket := csession.masterSocket
 	if socket == nil {
 		socket = csession.slaveSocket
@@ -2860,7 +2860,7 @@ func (c *Collection) NewIter(session *Session, firstBatch []bson.Raw, cursorId i
 	if socket != nil {
 		server = socket.Server()
 	}
-	csession.m.RUnlock()
+	// csession.m.RUnlock()
 
 	if server == nil {
 		if csession.Mode() == Eventual {
@@ -4060,9 +4060,9 @@ func (db *Database) run(socket *mongoSocket, cmd, result interface{}) (err error
 
 	// Collection.Find:
 	session := db.Session
-	session.m.RLock()
+	// session.m.RLock()
 	op := session.queryConfig.op // Copy.
-	session.m.RUnlock()
+	// session.m.RUnlock()
 	op.query = cmd
 	op.collection = db.Name + ".$cmd"
 
@@ -4360,12 +4360,12 @@ func (q *Query) Tail(timeout time.Duration) *Iter {
 }
 
 func (s *Session) prepareQuery(op *queryOp) {
-	s.m.RLock()
+	// s.m.RLock()
 	op.mode = s.consistency
 	if s.slaveOk {
 		op.flags |= flagSlaveOk
 	}
-	s.m.RUnlock()
+	// s.m.RUnlock()
 	return
 }
 
@@ -4735,9 +4735,9 @@ func (iter *Iter) acquireSocket() (*mongoSocket, error) {
 		// monotonic session gets a write and shifts from secondary
 		// to primary. Our cursor is in a specific server, though.
 
-		iter.session.m.Lock()
+		// iter.session.m.Lock()
 		info := iter.session.dialInfo
-		iter.session.m.Unlock()
+		// iter.session.m.Unlock()
 
 		socket.Release()
 		socket, _, err = iter.server.AcquireSocket(info)
@@ -5211,9 +5211,9 @@ func (q *Query) Apply(change Change, result interface{}) (info *ChangeInfo, err 
 		cname := op.collection[c+1:]
 
 		// https://docs.mongodb.com/manual/reference/command/findAndModify/#dbcmd.findAndModify
-		session.m.RLock()
+		// session.m.RLock()
 		safeOp := session.safeOp
-		session.m.RUnlock()
+		// session.m.RUnlock()
 		var writeConcern interface{}
 		if safeOp == nil {
 			writeConcern = bson.D{{Name: "w", Value: 0}}
@@ -5352,27 +5352,27 @@ func (s *Session) acquireSocket(slaveOk bool) (*mongoSocket, error) {
 	socket := s.slaveSocket
 	return socket, nil
 	// Read-only lock to check for previously reserved socket.
-	s.m.RLock()
+	// s.m.RLock()
 	// If there is a slave socket reserved and its use is acceptable, take it as long
 	// as there isn't a master socket which would be preferred by the read preference mode.
 	if s.slaveSocket != nil && s.slaveSocket.dead == nil && s.slaveOk && slaveOk && (s.masterSocket == nil || s.consistency != PrimaryPreferred && s.consistency != Monotonic) {
 		socket := s.slaveSocket
 		socket.Acquire()
-		s.m.RUnlock()
+		// s.m.RUnlock()
 		return socket, nil
 	}
 	if s.masterSocket != nil && s.masterSocket.dead == nil {
 		socket := s.masterSocket
 		socket.Acquire()
-		s.m.RUnlock()
+		// s.m.RUnlock()
 		return socket, nil
 	}
-	s.m.RUnlock()
+	// s.m.RUnlock()
 
 	// No go.  We may have to request a new socket and change the session,
 	// so try again but with an exclusive lock now.
-	s.m.Lock()
-	defer s.m.Unlock()
+	// s.m.Lock()
+	// defer s.m.Unlock()
 
 	if s.slaveSocket != nil && s.slaveOk && slaveOk && (s.masterSocket == nil || s.consistency != PrimaryPreferred && s.consistency != Monotonic) {
 		if s.slaveSocket.dead == nil {
@@ -5569,10 +5569,10 @@ func (c *Collection) writeOp(op interface{}, ordered bool) (lerr *LastError, err
 	}
 	defer socket.Release()
 
-	s.m.RLock()
+	// s.m.RLock()
 	safeOp := s.safeOp
 	bypassValidation := s.bypassValidation
-	s.m.RUnlock()
+	// s.m.RUnlock()
 
 	if socket.ServerInfo().MaxWireVersion >= 2 {
 		// Servers with a more recent write protocol benefit from write commands.
