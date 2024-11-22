@@ -5193,8 +5193,9 @@ func (q *Query) Apply(change Change, result interface{}) (info *ChangeInfo, err 
 		}
 
 		err = db.Collection(collectionName).FindOneAndUpdate(context.Background(), query, change.Update, &opts).Decode(result)
-
-		handleEventsFunc(collectionName, query, change.Update)
+		if err == nil {
+			handleEventsFunc(collectionName, query, change.Update)
+		}
 		return nil, err
 	} else {
 		q.m.Lock()
