@@ -94,7 +94,8 @@ type GridFile struct {
 
 	doc gfsFile
 
-	uploadStream *gridfs.UploadStream
+	uploadStream   *gridfs.UploadStream
+	downloadStream *gridfs.DownloadStream
 }
 
 type gfsFile struct {
@@ -559,7 +560,13 @@ func (file *GridFile) Close() (err error) {
 	file.m.Lock()
 	defer file.m.Unlock()
 	if UseMongoDriver {
-		return file.uploadStream.Close()
+		if file.uploadStream != nil {
+			return file.uploadStream.Close()
+		}
+		if file.downloadStream != nil {
+			return file.downloadStream.Close()
+		}
+		return nil
 	} else {
 		if file.mode == gfsWriting {
 			if len(file.wbuf) > 0 && file.err == nil {
@@ -777,7 +784,10 @@ func (file *GridFile) Read(b []byte) (n int, err error) {
 
 		var downloadStream *gridfs.DownloadStream
 		downloadStream, err = bucket.OpenDownloadStream(file.Id())
-
+		if err != nil {
+			return 0, err
+		}
+		file.downloadStream = downloadStream
 		return downloadStream.Read(b)
 
 	} else {
