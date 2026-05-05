@@ -1775,6 +1775,77 @@ func (c *Collection) EnsureIndex(index Index) error {
 		return nil
 	}
 
+	if UseMongoDriver {
+		db := session.GetDriverDatabase()
+
+		keys := mongoDriverBson.D{}
+		for _, e := range keyInfo.key {
+			keys = append(keys, mongoDriverBson.E{Key: e.Name, Value: e.Value})
+		}
+
+		opts := options.Index()
+		switch {
+		case index.Name != "":
+			opts.SetName(index.Name)
+		case keyInfo.name != "":
+			opts.SetName(keyInfo.name)
+		}
+		if index.Unique {
+			opts.SetUnique(true)
+		}
+		if index.Background {
+			opts.SetBackground(true)
+		}
+		if index.Sparse {
+			opts.SetSparse(true)
+		}
+		if index.ExpireAfter > 0 {
+			opts.SetExpireAfterSeconds(int32(index.ExpireAfter / time.Second))
+		}
+		if index.PartialFilter != nil {
+			pf := mongoDriverBson.M{}
+			for k, v := range index.PartialFilter {
+				pf[k] = v
+			}
+			opts.SetPartialFilterExpression(pf)
+		}
+		if index.DefaultLanguage != "" {
+			opts.SetDefaultLanguage(index.DefaultLanguage)
+		}
+		if index.LanguageOverride != "" {
+			opts.SetLanguageOverride(index.LanguageOverride)
+		}
+		if len(keyInfo.weights) > 0 {
+			w := mongoDriverBson.D{}
+			for _, e := range keyInfo.weights {
+				w = append(w, mongoDriverBson.E{Key: e.Name, Value: e.Value})
+			}
+			opts.SetWeights(w)
+		}
+		if index.Collation != nil {
+			opts.SetCollation(&options.Collation{
+				Locale:          index.Collation.Locale,
+				CaseLevel:       index.Collation.CaseLevel,
+				CaseFirst:       index.Collation.CaseFirst,
+				Strength:        index.Collation.Strength,
+				NumericOrdering: index.Collation.NumericOrdering,
+				Alternate:       index.Collation.Alternate,
+				MaxVariable:     index.Collation.MaxVariable,
+				Normalization:   index.Collation.Normalization,
+				Backwards:       index.Collation.Backwards,
+			})
+		}
+
+		_, err := db.Collection(c.Name).Indexes().CreateOne(
+			context.Background(),
+			mongo.IndexModel{Keys: keys, Options: opts},
+		)
+		if err == nil {
+			session.cluster().CacheIndex(cacheKey, true)
+		}
+		return err
+	}
+
 	spec := indexSpec{
 		Name:                    keyInfo.name,
 		NS:                      c.FullName,
