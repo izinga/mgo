@@ -27,7 +27,6 @@
 package mgo
 
 import (
-	"context"
 	"crypto/md5"
 	"crypto/tls"
 	"crypto/x509"
@@ -1836,8 +1835,10 @@ func (c *Collection) EnsureIndex(index Index) error {
 			})
 		}
 
+		ctx, cancel := opContext()
+		defer cancel()
 		_, err := db.Collection(c.Name).Indexes().CreateOne(
-			context.Background(),
+			ctx,
 			mongo.IndexModel{Keys: keys, Options: opts},
 		)
 		if err == nil {
@@ -2665,7 +2666,9 @@ func (s *Session) SelectServers(tags ...bson.D) {
 // Ping runs a trivial ping command just to get in touch with the server.
 func (s *Session) Ping() error {
 	if UseMongoDriver {
-		return s.mongoDBClient.Ping(context.Background(), nil)
+		ctx, cancel := opContext()
+		defer cancel()
+		return s.mongoDBClient.Ping(ctx, nil)
 	} else {
 		return s.Run("ping", nil)
 	}
@@ -3001,11 +3004,13 @@ func (p *Pipe) All(result interface{}) error {
 	if UseMongoDriver {
 		db := p.session.GetDriverDatabase()
 		collectionName := p.collection.Name
-		cur, err := db.Collection(collectionName).Aggregate(context.Background(), p.pipeline)
+		ctx, cancel := opContext()
+		defer cancel()
+		cur, err := db.Collection(collectionName).Aggregate(ctx, p.pipeline)
 		if err != nil {
 			return err
 		}
-		err = cur.All(context.Background(), result)
+		err = cur.All(ctx, result)
 		return err
 	} else {
 		return p.Iter().All(result)
@@ -3161,7 +3166,9 @@ func (c *Collection) Insert(docs ...interface{}) error {
 
 		var docsMany []interface{}
 		docsMany = append(docsMany, docs...)
-		_, err := db.Collection(c.Name).InsertMany(context.Background(), docsMany)
+		ctx, cancel := opContext()
+		defer cancel()
+		_, err := db.Collection(c.Name).InsertMany(ctx, docsMany)
 		if err == nil {
 			handleEventsFunc(c.FullName, nil, docs[0])
 		}
@@ -3189,7 +3196,9 @@ func (c *Collection) Update(selector interface{}, update interface{}) error {
 	if UseMongoDriver {
 		db := c.Database.Session.GetDriverDatabase()
 
-		_, err := db.Collection(c.Name).UpdateOne(context.Background(), selector, update)
+		ctx, cancel := opContext()
+		defer cancel()
+		_, err := db.Collection(c.Name).UpdateOne(ctx, selector, update)
 		if err == nil {
 			handleEventsFunc(c.FullName, selector, update)
 		}
@@ -3229,7 +3238,9 @@ func (c *Collection) UpdateId(id interface{}, update interface{}) error {
 				id, _ = primitive.ObjectIDFromHex(bo.Hex())
 			}
 		}
-		_, err := db.Collection(c.Name).UpdateByID(context.Background(), id, update)
+		ctx, cancel := opContext()
+		defer cancel()
+		_, err := db.Collection(c.Name).UpdateByID(ctx, id, update)
 
 		// Trigger event handler for consistency with Update() method
 		if err == nil {
@@ -3269,7 +3280,9 @@ func (c *Collection) UpdateAll(selector interface{}, update interface{}) (info *
 	if UseMongoDriver {
 		db := c.Database.Session.GetDriverDatabase()
 
-		_, err = db.Collection(c.Name).UpdateMany(context.Background(), selector, update)
+		ctx, cancel := opContext()
+		defer cancel()
+		_, err = db.Collection(c.Name).UpdateMany(ctx, selector, update)
 		return nil, err
 
 	} else {
@@ -3360,7 +3373,9 @@ func (c *Collection) Remove(selector interface{}) error {
 		}
 
 		db := c.Database.Session.GetDriverDatabase()
-		_, err := db.Collection(c.Name).DeleteOne(context.Background(), selector)
+		ctx, cancel := opContext()
+		defer cancel()
+		_, err := db.Collection(c.Name).DeleteOne(ctx, selector)
 		return err
 	} else {
 		if selector == nil {
@@ -3384,7 +3399,9 @@ func (c *Collection) RemoveId(id interface{}) error {
 		db := c.Database.Session.GetDriverDatabase()
 
 		filter := bson.M{"_id": id}
-		_, err := db.Collection(c.Name).DeleteOne(context.Background(), filter)
+		ctx, cancel := opContext()
+		defer cancel()
+		_, err := db.Collection(c.Name).DeleteOne(ctx, filter)
 		return err
 	} else {
 		return c.Remove(bson.D{{Name: "_id", Value: id}})
@@ -3406,7 +3423,9 @@ func (c *Collection) RemoveAll(selector interface{}) (info *ChangeInfo, err erro
 		}
 
 		db := c.Database.Session.GetDriverDatabase()
-		_, err := db.Collection(c.Name).DeleteMany(context.Background(), selector)
+		ctx, cancel := opContext()
+		defer cancel()
+		_, err := db.Collection(c.Name).DeleteMany(ctx, selector)
 		return nil, err
 	} else {
 		if selector == nil {
@@ -3950,8 +3969,10 @@ func (q *Query) One(result interface{}) (err error) {
 		// get only collection name from full name, ex: only user from data_store.user
 		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
 
+		ctx, cancel := opContext()
+		defer cancel()
 		err = db.Collection(collectionName).FindOne(
-			context.Background(),
+			ctx,
 			q.op.query,
 		).Decode(result)
 
@@ -4746,15 +4767,17 @@ func (q *Query) All(result interface{}) error {
 			Skip:       &skip,
 		}
 
+		ctx, cancel := opContext()
+		defer cancel()
 		cur, err := db.Collection(collectionName).Find(
-			context.Background(),
+			ctx,
 			q.op.query,
 			opts,
 		)
 		if err != nil {
 			return err
 		}
-		err = cur.All(context.Background(), result)
+		err = cur.All(ctx, result)
 		return err
 	} else {
 		return q.Iter().All(result)
@@ -4905,7 +4928,9 @@ func (q *Query) Count() (n int, err error) {
 		// get only collection name from full name, ex: only user from data_store.user
 		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
 
-		count, err := db.Collection(collectionName).CountDocuments(context.Background(), q.op.query)
+		ctx, cancel := opContext()
+		defer cancel()
+		count, err := db.Collection(collectionName).CountDocuments(ctx, q.op.query)
 
 		return int(count), err
 	} else {
@@ -4963,7 +4988,9 @@ func (q *Query) Distinct(key string, result interface{}) error {
 		db := q.session.GetDriverDatabase()
 		// get only collection name from full name, ex: only user from data_store.user
 		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
-		result, err = db.Collection(collectionName).Distinct(context.Background(), key, q.query)
+		ctx, cancel := opContext()
+		defer cancel()
+		result, err = db.Collection(collectionName).Distinct(ctx, key, q.query)
 		return err
 	} else {
 		q.m.Lock()
@@ -5270,7 +5297,9 @@ func (q *Query) Apply(change Change, result interface{}) (info *ChangeInfo, err 
 			query = bson.M{}
 		}
 
-		err = db.Collection(collectionName).FindOneAndUpdate(context.Background(), query, change.Update, &opts).Decode(result)
+		ctx, cancel := opContext()
+		defer cancel()
+		err = db.Collection(collectionName).FindOneAndUpdate(ctx, query, change.Update, &opts).Decode(result)
 		if err == nil {
 			handleEventsFunc(collectionName, query, change.Update)
 		}
