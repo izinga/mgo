@@ -27,7 +27,6 @@
 package mgo
 
 import (
-	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"errors"
@@ -235,7 +234,9 @@ func (gfs *GridFS) OpenId(id interface{}) (file *GridFile, err error) {
 	if UseMongoDriver {
 		var doc gfsFile
 		db := gfs.Files.Database.Session.GetDriverDatabase()
-		err = db.Collection(gfs.Files.Name).FindOne(context.Background(), bson.M{"_id": id}).Decode(&doc)
+		ctx, cancel := opContext()
+		defer cancel()
+		err = db.Collection(gfs.Files.Name).FindOne(ctx, bson.M{"_id": id}).Decode(&doc)
 		if err != nil {
 			return
 		}
