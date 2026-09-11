@@ -4930,6 +4930,29 @@ func (q *Query) Count() (n int, err error) {
 
 		ctx, cancel := opContext()
 		defer cancel()
+
+		// Restore the pre-driver semantics for a whole-collection count.
+		//
+		// The legacy `count` command answered an empty predicate from stored
+		// metadata, effectively O(1). CountDocuments is specified to stay
+		// accurate under concurrent writes and therefore always runs
+		// $match + $group - a full collection scan. Bridging .Count() to it
+		// silently turned every unfiltered count into a COLLSCAN.
+		//
+		// On the Hotstar cluster that was measured at 637,489,140 documents
+		// examined across 1,140 executions of a single call site, with a worst
+		// case of 1,002 s. EstimatedDocumentCount reads the same metadata the
+		// old command did, so this is a restoration rather than a new
+		// approximation. It carries the same caveat the old behaviour had: the
+		// figure can be briefly stale after an unclean shutdown.
+		if isEmptyFilter(q.op.query) {
+			count, err := db.Collection(collectionName).EstimatedDocumentCount(ctx)
+			if err == nil {
+				return int(count), nil
+			}
+			// fall through to the exact count if metadata is unavailable
+		}
+
 		count, err := db.Collection(collectionName).CountDocuments(ctx, q.op.query)
 
 		return int(count), err
