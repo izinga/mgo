@@ -950,6 +950,19 @@ func (s *Session) GetDriverDatabase() *mongo.Database {
 	return s.mongoDBClient.Database(s.defaultdb)
 }
 
+// ErrNoDriverClient is returned by operations on a session that has no MongoDB
+// driver client attached. The operation used to dereference the nil client and
+// panic, which inside a background goroutine took the whole process down
+// (nerve, 20 Sep 2026).
+var ErrNoDriverClient = errors.New("mgo: no MongoDB driver client attached to the session")
+
+func (s *Session) driverDatabase() (*mongo.Database, error) {
+	if s == nil || s.mongoDBClient == nil {
+		return nil, ErrNoDriverClient
+	}
+	return s.mongoDBClient.Database(s.defaultdb), nil
+}
+
 func (s *Session) SetMongoDriverUse(flag bool) {
 	UseMongoDriver = flag
 }
@@ -1775,7 +1788,10 @@ func (c *Collection) EnsureIndex(index Index) error {
 	}
 
 	if UseMongoDriver {
-		db := session.GetDriverDatabase()
+		db, dbErr := session.driverDatabase()
+		if dbErr != nil {
+			return dbErr
+		}
 
 		keys := mongoDriverBson.D{}
 		for _, e := range keyInfo.key {
@@ -2799,7 +2815,10 @@ func (c *Collection) Repair() *Iter {
 //
 // See the Find method for more details.
 func (c *Collection) FindId(id interface{}) *Query {
-	return c.Find(bson.D{{Name: "_id", Value: id}})
+	// bson.M, not this package's bson.D: the official driver cannot encode
+	// bson.D ("cannot marshal type bson.D to a BSON Document"), so FindId
+	// failed on every call when UseMongoDriver was set.
+	return c.Find(bson.M{"_id": id})
 }
 
 // Pipe is used to run aggregation queries against a
@@ -3002,7 +3021,10 @@ func (iter *Iter) State() (int64, []bson.Raw) {
 // All works like Iter.All.
 func (p *Pipe) All(result interface{}) error {
 	if UseMongoDriver {
-		db := p.session.GetDriverDatabase()
+		db, dbErr := p.session.driverDatabase()
+		if dbErr != nil {
+			return dbErr
+		}
 		collectionName := p.collection.Name
 		ctx, cancel := opContext()
 		defer cancel()
@@ -3162,7 +3184,10 @@ func IsDup(err error) bool {
 // be of type *LastError.
 func (c *Collection) Insert(docs ...interface{}) error {
 	if UseMongoDriver {
-		db := c.Database.Session.GetDriverDatabase()
+		db, dbErr := c.Database.Session.driverDatabase()
+		if dbErr != nil {
+			return dbErr
+		}
 
 		var docsMany []interface{}
 		docsMany = append(docsMany, docs...)
@@ -3194,7 +3219,10 @@ func (c *Collection) Insert(docs ...interface{}) error {
 //	http://www.mongodb.org/display/DOCS/Atomic+Operations
 func (c *Collection) Update(selector interface{}, update interface{}) error {
 	if UseMongoDriver {
-		db := c.Database.Session.GetDriverDatabase()
+		db, dbErr := c.Database.Session.driverDatabase()
+		if dbErr != nil {
+			return dbErr
+		}
 
 		ctx, cancel := opContext()
 		defer cancel()
@@ -3230,7 +3258,10 @@ func (c *Collection) Update(selector interface{}, update interface{}) error {
 // See the Update method for more details.
 func (c *Collection) UpdateId(id interface{}, update interface{}) error {
 	if UseMongoDriver {
-		db := c.Database.Session.GetDriverDatabase()
+		db, dbErr := c.Database.Session.driverDatabase()
+		if dbErr != nil {
+			return dbErr
+		}
 
 		switch id.(type) {
 		case bson.ObjectId:
@@ -3278,7 +3309,10 @@ type ChangeInfo struct {
 //	http://www.mongodb.org/display/DOCS/Atomic+Operations
 func (c *Collection) UpdateAll(selector interface{}, update interface{}) (info *ChangeInfo, err error) {
 	if UseMongoDriver {
-		db := c.Database.Session.GetDriverDatabase()
+		db, dbErr := c.Database.Session.driverDatabase()
+		if dbErr != nil {
+			return nil, dbErr
+		}
 
 		ctx, cancel := opContext()
 		defer cancel()
@@ -3372,7 +3406,10 @@ func (c *Collection) Remove(selector interface{}) error {
 			selector = bson.D{}
 		}
 
-		db := c.Database.Session.GetDriverDatabase()
+		db, dbErr := c.Database.Session.driverDatabase()
+		if dbErr != nil {
+			return dbErr
+		}
 		ctx, cancel := opContext()
 		defer cancel()
 		_, err := db.Collection(c.Name).DeleteOne(ctx, selector)
@@ -3396,7 +3433,10 @@ func (c *Collection) Remove(selector interface{}) error {
 // See the Remove method for more details.
 func (c *Collection) RemoveId(id interface{}) error {
 	if UseMongoDriver {
-		db := c.Database.Session.GetDriverDatabase()
+		db, dbErr := c.Database.Session.driverDatabase()
+		if dbErr != nil {
+			return dbErr
+		}
 
 		filter := bson.M{"_id": id}
 		ctx, cancel := opContext()
@@ -3422,7 +3462,10 @@ func (c *Collection) RemoveAll(selector interface{}) (info *ChangeInfo, err erro
 			selector = bson.D{}
 		}
 
-		db := c.Database.Session.GetDriverDatabase()
+		db, dbErr := c.Database.Session.driverDatabase()
+		if dbErr != nil {
+			return nil, dbErr
+		}
 		ctx, cancel := opContext()
 		defer cancel()
 		_, err := db.Collection(c.Name).DeleteMany(ctx, selector)
@@ -3964,7 +4007,10 @@ Error:
 // desired.
 func (q *Query) One(result interface{}) (err error) {
 	if UseMongoDriver {
-		db := q.session.GetDriverDatabase()
+		db, dbErr := q.session.driverDatabase()
+		if dbErr != nil {
+			return dbErr
+		}
 
 		// get only collection name from full name, ex: only user from data_store.user
 		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
@@ -4753,7 +4799,10 @@ func (iter *Iter) All(result interface{}) error {
 // All works like Iter.All.
 func (q *Query) All(result interface{}) error {
 	if UseMongoDriver {
-		db := q.session.GetDriverDatabase()
+		db, dbErr := q.session.driverDatabase()
+		if dbErr != nil {
+			return dbErr
+		}
 
 		// get only collection name from full name, ex: only user from data_store.user
 		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
@@ -4924,7 +4973,10 @@ type countCmd struct {
 // Count returns the total number of documents in the result set.
 func (q *Query) Count() (n int, err error) {
 	if UseMongoDriver {
-		db := q.session.GetDriverDatabase()
+		db, dbErr := q.session.driverDatabase()
+		if dbErr != nil {
+			return 0, dbErr
+		}
 		// get only collection name from full name, ex: only user from data_store.user
 		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
 
@@ -5008,7 +5060,10 @@ type distinctCmd struct {
 func (q *Query) Distinct(key string, result interface{}) error {
 	if UseMongoDriver {
 		var err error
-		db := q.session.GetDriverDatabase()
+		db, dbErr := q.session.driverDatabase()
+		if dbErr != nil {
+			return dbErr
+		}
 		// get only collection name from full name, ex: only user from data_store.user
 		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
 		ctx, cancel := opContext()
@@ -5306,7 +5361,10 @@ type valueResult struct {
 //	http://www.mongodb.org/display/DOCS/Atomic+Operations
 func (q *Query) Apply(change Change, result interface{}) (info *ChangeInfo, err error) {
 	if UseMongoDriver {
-		db := q.session.GetDriverDatabase()
+		db, dbErr := q.session.driverDatabase()
+		if dbErr != nil {
+			return nil, dbErr
+		}
 		// get only collection name from full name, ex: only user from data_store.user
 		collectionName := strings.ReplaceAll(q.op.collection, fmt.Sprintf("%s.", q.session.dialInfo.Database), "")
 
